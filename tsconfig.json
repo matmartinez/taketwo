@@ -1,6 +1,7 @@
 {
   "files": [ "index.ts" ],
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    "target": "ES2016"
   }
 }
