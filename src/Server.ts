@@ -20,7 +20,7 @@ interface Route {
   sourceID: number | null;
   
   // The available sources for routing.
-  sources: [Source];
+  sources: Array<Source>;
 }
 
 interface RouteChangeRequest {
@@ -30,7 +30,7 @@ interface RouteChangeRequest {
 
 interface ServerDelegate {
   routeRequestedForServer(server: Server): Promise<Route>;
-  serverDidReceiveRouteChangeRequest(server: Server, request: RouteChangeRequest): void;
+  serverDidReceiveRouteChangeRequest(server: Server, request: RouteChangeRequest): Promise<void>;
 }
 
 class Server {

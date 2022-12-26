@@ -6,12 +6,12 @@
 // 
 
 import { Command, Parity, DataBits, DeviceConnection } from "./src/DeviceConnection";
-import { Server } from "./src/Server";
+import { Server, Route, RouteChangeRequest } from "./src/Server";
 import { State, StateMachine } from "./src/StateMachine";
 
 interface Settings {
   // The http port for the API.
-  port: number;
+  serverPort?: number;
   
   // Timeout in seconds when performing requests and device cannot be reached.
   timeout: number;
@@ -35,13 +35,12 @@ interface Settings {
 class Context {
   #stateMachine: StateMachine;
   #settings: Settings;
-  #server: Server;
   
+  server: Server;
   connectedDevice: DeviceConnection | undefined;
   
-  constructor(settings: Settings, server: Server, stateMachine: StateMachine){
+  constructor(settings: Settings, stateMachine: StateMachine){
     this.#stateMachine = stateMachine;
-    this.#server = server;
     this.#settings = settings;
   }
   
@@ -51,10 +50,6 @@ class Context {
     if (!didEnter) {
       console.error("Did not entered state", stateType);
     }
-  }
-  
-  get server(): Server {
-    return this.#server;
   }
   
   get settings(): Settings {
@@ -76,29 +71,39 @@ class DefaultState implements State, ContextAware {
   didEnterFrom(previousState?: State){
     console.info("Did enter `DefaultState`.");
     
-    const { server, settings } = this.context;
+    const { settings } = this.context;
+    const { serverPort } = settings;
     
-    const serve = async (port: number) => {
-      try {
-        await server.listen(port);
-      } catch (error) {
-        switch (error.code){
-          case "EADDRINUSE":
-            console.error(`Port ${port} is already in use. Quitting...`);
-            break;
-          default:
-            console.error(`Throwing unknown error when opening port ${port}. Quitting...`);
-            throw error;
+    const advance = () => this.context.applyState(WaitingForDeviceState);
+    
+    if (serverPort) {
+      const server = new Server();
+      const serve = async (port: number) => {
+        try {
+          await server.listen(port);
+        } catch (error) {
+          switch (error.code){
+            case "EADDRINUSE":
+              console.error(`Port ${port} is already in use. Quitting...`);
+              break;
+            default:
+              console.error(`Throwing unknown error when opening port ${port}. Quitting...`);
+              console.error(error);
+          }
+          process.exit(1);
+          return;
         }
-        process.exit(1);
-        return;
-      }
+        
+        console.info(`Listening at port ${port}.`);
+        advance();
+      };
       
-      console.info(`Listening at port ${port}.`);
-      this.context.applyState(WaitingForDeviceState);
-    };
-    
-    serve(settings.port);
+      const { serverPort } = settings;
+      console.info(`Launching server at port ${serverPort}.`);
+      serve(serverPort);
+    } else {
+      advance();
+    }
   }
 }
 
@@ -211,7 +216,8 @@ class ConnectDeviceState implements State, ContextAware {
   }
 }
 
-class DeviceConnectedWaitingForEventState implements State {
+class DeviceConnectedWaitingForEventState implements State, ContextAware {
+  context: Context;
   
   isValidNext(stateType: typeof State): boolean {
     return stateType == DeviceDisconnectedState;
@@ -220,7 +226,36 @@ class DeviceConnectedWaitingForEventState implements State {
   didEnterFrom(previousState: State){
     console.info("Did enter `DeviceConnectedWaitingForEventState`.");
     
+    const { server, connectedDevice } = this.context;
     
+    if (!server) {
+      console.info("The server for listing to events was not configured, quitting...");
+      process.exit(0);
+      return;
+    }
+    
+    server.delegate = {
+      routeRequestedForServer(server: Server): Promise<Route> {
+        const solve = async (): Promise<Route> => {
+          const command = Command.port();
+          const device = await connectedDevice.run(command) as number;
+          
+          return { sourceID: device, sources: [] };
+        };
+        return solve();
+      },
+      
+      serverDidReceiveRouteChangeRequest(server: Server, request: RouteChangeRequest): Promise<void> {
+        const solve = async (): Promise<void> => {
+          const setPort = Command.setPort(request.sourceID);
+          const setDefaultPort = Command.setDefaultPort(request.sourceID);
+          
+          await connectedDevice.run(setPort);
+          await connectedDevice.run(setDefaultPort);
+        };
+        return solve();
+      }
+    }
   }
   
 }
@@ -236,7 +271,7 @@ const possible: Array<State> = [
 const stateMachine = new StateMachine(possible);
 
 const settings: Settings = {
-  port: 3001,
+  serverPort: 3001,
   timeout: 10,
   device: "/dev/ttyACM0",
   baudRate: 9600,
@@ -244,8 +279,7 @@ const settings: Settings = {
   dataBits: 8
 };
 
-const server = new Server();
-const ctx = new Context(settings, server, stateMachine);
+const ctx = new Context(settings, stateMachine);
 
 for (const state of possible) {
   (state as any as ContextAware).context = ctx;
