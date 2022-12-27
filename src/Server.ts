@@ -69,11 +69,30 @@ class Server {
         
         console.log(`Requested sourceID change to ${sourceID}`);
         
-        const request = { sourceID } as RouteChangeRequest;
+        const request: RouteChangeRequest = { sourceID };
         this.delegate?.serverDidReceiveRouteChangeRequest(this, request);
         res.sendStatus(200);
       } catch (error) {
         console.error("Error when processing PUT /input:");
+        console.error(error);
+        
+        res.sendStatus(500);
+      }
+    });
+    
+    // Toggles input.
+    server.post("/toggle_input", async (req, res) => {
+      try {
+        const route = await this.delegate?.routeRequestedForServer(this);
+        const request: RouteChangeRequest = { sourceID: route.sourceID == 0 ? 1 : 0 };
+        
+        console.log(`Toggle request will change sourceID to ${request.sourceID}`);
+        
+        this.delegate?.serverDidReceiveRouteChangeRequest(this, request);
+        
+        res.json(request);
+      } catch (error) {
+        console.error("Error when processing POST /toggle_input:");
         console.error(error);
         
         res.sendStatus(500);
