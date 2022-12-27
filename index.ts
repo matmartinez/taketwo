@@ -95,6 +95,8 @@ class DefaultState implements State, ContextAware {
         }
         
         console.info(`Listening at port ${port}.`);
+        this.context.server = server;
+        
         advance();
       };
       
@@ -167,35 +169,40 @@ class ConnectDeviceState implements State, ContextAware {
     console.info(`Trying to connect to:`, settings);
     
     const connection = new DeviceConnection(device, { baudRate, parity, dataBits });
+
+	  connection.on(DeviceConnection.Event.open, (error) => {
+      console.info("Did open connection to device.");
+      this.context.applyState(DeviceConnectedWaitingForEventState);
+      
+      const queryCmd = async (cmd) => {
+        console.info(`Querying [${cmd.instruction}] on ${device}...`);
+        
+        let status: string;
+        try {
+          status = await connection.run(cmd);
+        } catch (error) {
+          console.warn(`Unable to run [${cmd.instruction}] on ${device}...`);
+          console.warn(error);
+          return;
+        }
+        
+        console.info(`[${cmd.instruction}] on ${device}:`);
+        console.info(status);
+      };
+      
+      queryCmd(Command.status());
+      queryCmd(Command.version());
+      queryCmd(Command.port());
+	  });
+  
     connection.on(DeviceConnection.Event.error, (error) => {
       console.error(`An error ocurred when connecting to ${device}`);
       console.error(error);
       
       this.#disconnectIfNeeded();
     });
-    
+  
     this.context.connectedDevice = connection;
-    
-    const queryStatus = async () => {
-      console.info(`Running .status on ${device}...`);
-      
-      let status: string;
-      try {
-        status = await connection.run(Command.status());
-      } catch (error) {
-        console.warn(`Unable to run .status on ${device}...`);
-        console.warn(error);
-        this.#disconnectIfNeeded();
-        return;
-      }
-      
-      console.info(`.status on ${device}:`);
-      console.info(status);
-      
-      this.context.applyState(DeviceConnectedWaitingForEventState);
-    }
-    
-    queryStatus();
   }
   
   #disconnectIfNeeded(){
@@ -247,11 +254,19 @@ class DeviceConnectedWaitingForEventState implements State, ContextAware {
       
       serverDidReceiveRouteChangeRequest(server: Server, request: RouteChangeRequest): Promise<void> {
         const solve = async (): Promise<void> => {
+          console.log(`Setting route to port ${request.sourceID}`);
+          
           const setPort = Command.setPort(request.sourceID);
           const setDefaultPort = Command.setDefaultPort(request.sourceID);
           
-          await connectedDevice.run(setPort);
-          await connectedDevice.run(setDefaultPort);
+          try {
+            await connectedDevice.run(setPort);
+            await connectedDevice.run(setDefaultPort);
+          } catch (error) {
+            console.error(`There was a problem setting route to port ${request.sourceID}:`);
+            console.error(error);
+          }
+          
         };
         return solve();
       }

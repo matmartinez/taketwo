@@ -6,13 +6,14 @@
 // 
 
 import * as express from "express";
+import * as bodyParser from "body-parser";
 
 interface Source {
   // An unique identifier for this source.
   id: number;
   
   // A description for this source. Eg: MacBook Pro.
-  description: string;
+  description: string | null;
 }
 
 interface Route {
@@ -40,24 +41,42 @@ class Server {
   constructor(){
     const server = express();
     
+    // Parse application/json.
+    server.use(bodyParser.json());
+    
     // Returns the current Status.
     server.get("/input", async (req, res) => {
       try {
         const route = await this.delegate?.routeRequestedForServer(this);
         res.json(route);
       } catch (error) {
-        res.send(500);
+        console.error("Error when processing GET /input:");
+        console.error(error);
+        
+        res.sendStatus(500);
       }
     });
     
     // Receives an update.
     server.put("/input", (req, res) => {
       try {
-        const request = { sourceID: req.sourceID } as RouteChangeRequest;
+        const { sourceID } = req.body;
+        
+        if (sourceID === undefined) {
+          res.sendStatus(400);
+          return;
+        }
+        
+        console.log(`Requested sourceID change to ${sourceID}`);
+        
+        const request = { sourceID } as RouteChangeRequest;
         this.delegate?.serverDidReceiveRouteChangeRequest(this, request);
-        res.send(200);
+        res.sendStatus(200);
       } catch (error) {
-        res.send(500);
+        console.error("Error when processing PUT /input:");
+        console.error(error);
+        
+        res.sendStatus(500);
       }
     });
     
